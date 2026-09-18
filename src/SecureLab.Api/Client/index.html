@@ -40,11 +40,18 @@
       <ul id="incident-list" class="incident-list"></ul>
     </section>
 
-    <section class="panel" aria-labelledby="details-title">
+        <section class="panel" aria-labelledby="details-title">
       <h2 id="details-title">Деталі</h2>
       <div id="incident-details" class="details-placeholder">
         Виберіть інцидент зі списку.
       </div>
+    </section>
+
+    <section class="panel" aria-labelledby="summary-title">
+      <h2 id="summary-title">Підсумок за severity</h2>
+      <button type="button" id="summary-button">Показати підсумок</button>
+      <p id="summary-status" role="status"></p>
+      <ul id="summary-list"></ul>
     </section>
   </main>
 </body>
