@@ -98,3 +98,36 @@ GET {{api}}/api/incidents/ea768bef-1be4-46f2-8914-7eb4a7ff960c
 
 ### T-06 Ресурс не знайдено — очікуємо 404
 GET {{api}}/api/incidents/99999999-9999-9999-9999-999999999999
+
+
+### A. Звичайний пошук
+GET {{api}}/api/incidents/search?q=USB
+
+### B. Значення, якого немає
+GET {{api}}/api/incidents/search?q=zz-no-match
+
+### C. Єдиний дозволений контрольний ввід
+GET {{api}}/api/incidents/search?q=zz-no-match%27%20OR%20TRUE%20--%20
+
+### D. Легітимний апостроф
+GET {{api}}/api/incidents/search?q=O%27Brien
+
+
+### E. Легітимне слово з апострофом «комп'ютерного»
+GET {{api}}/api/incidents/search?q=%D0%BA%D0%BE%D0%BC%D0%BF%27%D1%8E%D1%82%D0%B5%D1%80%D0%BD%D0%BE%D0%B3%D0%BE
+
+
+### F. Буквальний пошук знака % — очікуємо []
+GET {{api}}/api/incidents/search?q=%25
+
+### G. Сортування за замовчуванням (без sortBy)
+GET {{api}}/api/incidents/search
+
+### H. Сортування за severity
+GET {{api}}/api/incidents/search?sortBy=severity
+
+### I. Сортування за status
+GET {{api}}/api/incidents/search?sortBy=status
+
+### T-05 Невідоме sortBy — очікуємо 400
+GET {{api}}/api/incidents/search?sortBy=price
