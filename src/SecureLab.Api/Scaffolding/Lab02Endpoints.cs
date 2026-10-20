@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using SecureLab.Api.Data;
 using SecureLab.Api.Data.Entities;
@@ -55,8 +56,15 @@ public static class Lab02Endpoints
             return Results.Ok(items);
         });
 
-        app.MapPost("/api/incidents", async (CreateIncidentRequest request, SecureLabDbContext db, CancellationToken ct) =>
+        // ЛР 03: створення доступне лише автентифікованому користувачу;
+        // власник береться з verified principal, а не з JSON чи заголовка.
+        app.MapPost("/api/incidents", async (CreateIncidentRequest request, HttpContext httpContext, SecureLabDbContext db, CancellationToken ct) =>
         {
+            // Ідентифікатор поточного користувача — лише з claim перевіреної cookie.
+            var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userId, out var verifiedUserId))
+                return Results.Problem(statusCode: StatusCodes.Status500InternalServerError);
+
             // Час фіксуємо один раз на початку обробки.
             var now = DateTimeOffset.UtcNow;
             var errors = new Dictionary<string, string[]>();
@@ -116,11 +124,11 @@ public static class Lab02Endpoints
                     title: "Інцидент уже існує",
                     detail: "Активний інцидент з такою назвою вже зареєстровано.");
 
-            // Server-managed поля встановлює лише сервер.
+            // Server-managed поля встановлює лише сервер; власник — verified principal.
             var incident = new Incident
             {
                 Id = Guid.NewGuid(),
-                OwnerUserId = DbSeeder.AliceId,
+                OwnerUserId = verifiedUserId,
                 Title = title,
                 Description = description,
                 Severity = severity,
@@ -138,7 +146,7 @@ public static class Lab02Endpoints
                 incident.Severity.ToString(), incident.Status.ToString(),
                 incident.OccurredAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc);
             return Results.Created($"/api/incidents/{incident.Id}", response);
-        });
+        }).RequireAuthorization();
     }
 
     // Спершу екрануємо саму \, потім % і _ — так їх ILIKE сприймає буквально.
@@ -146,6 +154,7 @@ public static class Lab02Endpoints
         value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
 }
 
+// Request DTO не містить OwnerUserId, Id, Status чи Role: ними керує сервер.
 public sealed record CreateIncidentRequest(
     string? Title, string? Description, string? Severity, DateTimeOffset? OccurredAtUtc);
 

@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
@@ -7,15 +7,20 @@ using SecureLab.Api.Data;
 
 namespace SecureLab.Api.Tests;
 
+// Регресійні тести ЛР 2. З ЛР 3 POST /api/incidents захищений,
+// тому передумова кожного тесту — вхід навчального користувача через cookie client.
 public sealed class IncidentCreationTests(SecureLabApiFactory factory)
     : IClassFixture<SecureLabApiFactory>
 {
-    private readonly HttpClient _client = factory.CreateClient();
+    private static string StudyPassword =>
+        Environment.GetEnvironmentVariable("SeedUsers__Password")
+        ?? throw new InvalidOperationException("Set local SeedUsers__Password outside Git.");
 
     // T-02: некоректний DTO (порожній title і severity "7") дає 400 Problem Details.
     [Fact]
     public async Task Post_WithInvalidDto_Returns400WithFieldErrors()
     {
+        using var client = await factory.LoginAsync("alice", StudyPassword);
         var body = new
         {
             title = "   ",
@@ -24,7 +29,7 @@ public sealed class IncidentCreationTests(SecureLabApiFactory factory)
             occurredAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10)
         };
 
-        using var response = await _client.PostAsJsonAsync("/api/incidents", body);
+        using var response = await client.PostAsJsonAsync("/api/incidents", body);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("application/problem+json",
@@ -45,6 +50,7 @@ public sealed class IncidentCreationTests(SecureLabApiFactory factory)
     [Fact]
     public async Task Post_WithDuplicateActiveTitle_Returns409()
     {
+        using var client = await factory.LoginAsync("alice", StudyPassword);
         // Унікальний title, щоб тест можна було повторювати на тій самій БД.
         var title = $"Regression-{Guid.NewGuid():N}";
         var body = new
@@ -57,10 +63,10 @@ public sealed class IncidentCreationTests(SecureLabApiFactory factory)
 
         try
         {
-            using var first = await _client.PostAsJsonAsync("/api/incidents", body);
+            using var first = await client.PostAsJsonAsync("/api/incidents", body);
             Assert.Equal(HttpStatusCode.Created, first.StatusCode);
 
-            using var second = await _client.PostAsJsonAsync("/api/incidents", body);
+            using var second = await client.PostAsJsonAsync("/api/incidents", body);
             Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
             Assert.Equal("application/problem+json",
                 second.Content.Headers.ContentType?.MediaType);
