@@ -16,6 +16,9 @@ public static class Lab03Identity
     // Обмеження зверху, щоб довгий рядок не робив хешування надто дорогим.
     private const int PasswordMaxLength = 128;
 
+    // Категорія журналу для подій автентифікації.
+    private const string AuthEventsCategory = "SecureLab.AuthEvents";
+
     public static void AddLab03Identity(this WebApplicationBuilder builder)
     {
         builder.Services.AddIdentity<ApplicationUser, IdentityRole<Guid>>(options =>
@@ -46,23 +49,56 @@ public static class Lab03Identity
     public static void MapLab03Identity(this WebApplication app)
     {
         app.MapPost("/api/auth/register", RegisterAsync);
-        app.MapPost("/api/auth/login", async (LoginInput input, SignInManager<ApplicationUser> signIn) =>
+        // ЛР 03 (добрий рівень): login з подіями автентифікації та обмеженням частоти.
+        app.MapPost("/api/auth/login", async (
+            LoginInput input, SignInManager<ApplicationUser> signIn,
+            ILoggerFactory loggers, HttpContext httpContext) =>
         {
+            var events = loggers.CreateLogger(AuthEventsCategory);
             if (string.IsNullOrWhiteSpace(input.UserName) || string.IsNullOrEmpty(input.Password))
+            {
+                LogAuthEvent(events, "login", "failure", null, httpContext);
                 return Results.Unauthorized();
+            }
+
             var result = await signIn.PasswordSignInAsync(input.UserName, input.Password, false, false);
-            return result.Succeeded ? Results.NoContent() : Results.Unauthorized();
-        });
+            if (!result.Succeeded)
+            {
+                // Однаковий 401 для невідомого користувача і хибного пароля;
+                // у подію не записується ні введене ім'я, ні причина відмови.
+                LogAuthEvent(events, "login", "failure", null, httpContext);
+                return Results.Unauthorized();
+            }
+
+            var user = await signIn.UserManager.FindByNameAsync(input.UserName);
+            LogAuthEvent(events, "login", "success", user?.Id, httpContext);
+            return Results.NoContent();
+        }).RequireRateLimiting("login");
         // ЛР 03 (добрий рівень): стандартний sign-out Identity; Set-Cookie наказує браузеру видалити cookie.
-        app.MapPost("/api/auth/logout", async (SignInManager<ApplicationUser> signIn) =>
+        app.MapPost("/api/auth/logout", async (
+            SignInManager<ApplicationUser> signIn, ILoggerFactory loggers, HttpContext httpContext) =>
         {
+            Guid? userId = Guid.TryParse(
+                httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
             await signIn.SignOutAsync();
+            LogAuthEvent(loggers.CreateLogger(AuthEventsCategory), "logout", "success", userId, httpContext);
             return Results.NoContent();
         });
         // ЛР 03: поточний користувач лише з verified principal; X-Demo-UserId не використовується.
         app.MapGet("/api/me", GetCurrentUser).RequireAuthorization();
         // Приклад лише mechanics: не повертає identity і не реалізує оцінювану operation.
         app.MapGet("/api/auth/session-check", () => Results.NoContent()).RequireAuthorization();
+    }
+
+    // Подія автентифікації: тип, результат, id користувача (лише якщо його підтверджено), trace id.
+    // Password, cookie, hash, token, заголовок Authorization і тіло запиту сюди не потрапляють.
+    private static void LogAuthEvent(
+        ILogger events, string eventType, string result, Guid? userId, HttpContext httpContext)
+    {
+        var level = result == "success" ? LogLevel.Information : LogLevel.Warning;
+        events.Log(level,
+            "Auth event {EventType}: result {Result}, user {UserId}, trace {TraceId}",
+            eventType, result, userId?.ToString() ?? "-", httpContext.TraceIdentifier);
     }
 
     // ЛР 03, етап 3: id береться з claim NameIdentifier перевіреної cookie.

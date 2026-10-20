@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using SecureLab.Api.Scaffolding;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -22,6 +23,39 @@ builder.Services.AddDbContext<SecureLabDbContext>(options =>
 builder.Services.AddScoped<IncidentQueries>();
 
 builder.AddLab03Identity();
+
+// ЛР 03 (добрий рівень): обмеження частоти спроб входу.
+// Ключ — IP-адреса клієнта; ліміт і вікно читаються з конфігурації під час запиту
+// (за замовчуванням 10 спроб за 60 секунд), щоб тест міг задати короткі значення.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, _) =>
+    {
+        // Подія без credentials: лише тип, результат і trace id.
+        var events = context.HttpContext.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("SecureLab.AuthEvents");
+        events.LogWarning(
+            "Auth event {EventType}: result {Result}, user {UserId}, trace {TraceId}",
+            "login", "rate_limited", "-", context.HttpContext.TraceIdentifier);
+        return ValueTask.CompletedTask;
+    };
+    options.AddPolicy("login", httpContext =>
+    {
+        var configuration = httpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var permitLimit = configuration.GetValue("LoginRateLimit:PermitLimit", 10);
+        var windowSeconds = configuration.GetValue("LoginRateLimit:WindowSeconds", 60);
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permitLimit,
+                Window = TimeSpan.FromSeconds(windowSeconds),
+                QueueLimit = 0
+            });
+    });
+});
 
 var app = builder.Build();
 
@@ -51,6 +85,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
