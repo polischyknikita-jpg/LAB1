@@ -1,0 +1,183 @@
+# ЛР 04 — сценарій PoC (REST Client у VS Code).
+# Перед кожним прогоном: --reset-database і перезапуск API.
+# VS Code запускайте командою `code .` з вікна PowerShell, де задано SeedUsers__Password.
+# Запити виконуйте згори вниз: login змінює поточного користувача.
+
+@host = http://localhost:5080
+@aliceId = 20000000-0000-0000-0000-000000000001
+@bobId = 20000000-0000-0000-0000-000000000002
+@aliceNewId = 20000000-0000-0000-0000-000000000003
+@bobNewId = 20000000-0000-0000-0000-000000000004
+@aliceSecondNewId = 20000000-0000-0000-0000-000000000005
+@bobCommentId = 30000000-0000-0000-0000-000000000002
+@aliceInternalCommentId = 30000000-0000-0000-0000-000000000003
+@missingId = 20000000-0000-0000-0000-000000000099
+
+###############################################################################
+# A. Read: Alice -> власний і чужий інцидент
+###############################################################################
+
+### A1. Alice login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "alice", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### A2. Own details (очікувано 200)
+GET {{host}}/api/incidents/{{aliceId}}
+Accept: application/json
+
+### A3. Foreign details with the same Alice cookie (матриця: 404; вразливий стан: 200)
+GET {{host}}/api/incidents/{{bobId}}
+Accept: application/json
+
+### A4. Неіснуючий id (для порівняння з A3 після виправлення)
+GET {{host}}/api/incidents/{{missingId}}
+Accept: application/json
+
+### A5. List Alice (матриця: лише власні 1, 3, 5)
+GET {{host}}/api/incidents
+Accept: application/json
+
+###############################################################################
+# B. Mutation: Alice змінює і видаляє інцидент Bob (стан до/після читає Bob)
+###############################################################################
+
+### B1. Bob login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "bob", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### B2. Стан ДО: Bob читає свій інцидент 4
+GET {{host}}/api/incidents/{{bobNewId}}
+Accept: application/json
+
+### B3. Alice login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "alice", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### B4. Alice змінює назву інциденту Bob (матриця: 404; вразливий стан: 200)
+PUT {{host}}/api/incidents/{{bobNewId}}
+Content-Type: application/json
+
+{ "title": "Changed by Alice (PoC)", "description": "Навчальна зміна для PoC IDOR." }
+
+### B5. Bob login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "bob", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### B6. Стан ПІСЛЯ update: Bob читає інцидент 4 (порівняйте title з B2)
+GET {{host}}/api/incidents/{{bobNewId}}
+Accept: application/json
+
+### B7. Alice login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "alice", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### B8. Alice видаляє інцидент Bob (матриця: 404; вразливий стан: 204)
+DELETE {{host}}/api/incidents/{{bobNewId}}
+
+### B9. Bob login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "bob", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### B10. Стан ПІСЛЯ delete: Bob читає інцидент 4 (вразливий стан: 404 — зник; після fix: 200)
+GET {{host}}/api/incidents/{{bobNewId}}
+Accept: application/json
+
+###############################################################################
+# C. Overposting: Alice оновлює власний інцидент 5 і підсовує захищені поля
+###############################################################################
+
+### C1. Alice login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "alice", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### C2. Стан ДО
+GET {{host}}/api/incidents/{{aliceSecondNewId}}
+Accept: application/json
+
+### C3. Update з зайвими полями (очікувано 200; status/severity/owner не змінюються)
+PUT {{host}}/api/incidents/{{aliceSecondNewId}}
+Content-Type: application/json
+
+{ "title": "Перевірка USB (оновлено)", "description": "Оновлений опис власного інциденту.", "status": "Closed", "severity": "Critical", "ownerUserId": "10000000-0000-0000-0000-000000000002", "role": "Analyst" }
+
+### C4. Стан ПІСЛЯ: title змінився, status New, severity Low, власник Alice
+GET {{host}}/api/incidents/{{aliceSecondNewId}}
+Accept: application/json
+
+###############################################################################
+# D. Vertical: Reporter Alice виконує triage (лише Analyst)
+###############################################################################
+
+### D1. Стан ДО: власний інцидент 3 у статусі New
+GET {{host}}/api/incidents/{{aliceNewId}}
+Accept: application/json
+
+### D2. Alice triage + підставлена роль у body (матриця: 403; вразливий стан: 200)
+POST {{host}}/api/incidents/{{aliceNewId}}/triage
+Content-Type: application/json
+
+{ "role": "Analyst", "status": "Triaged" }
+
+### D3. Стан ПІСЛЯ: статус інциденту 3 (вразливий: Triaged; після fix: New)
+GET {{host}}/api/incidents/{{aliceNewId}}
+Accept: application/json
+
+###############################################################################
+# E. Child resource: коментарі через прямий id
+###############################################################################
+
+### E1. Коментар Morgan до інциденту Bob (матриця: 404; вразливий стан: 200)
+GET {{host}}/api/incident-comments/{{bobCommentId}}
+Accept: application/json
+
+### E2. Internal comment до власного інциденту Alice (матриця: 404; вразливий стан: 200)
+GET {{host}}/api/incident-comments/{{aliceInternalCommentId}}
+Accept: application/json
+
+###############################################################################
+# F. Analyst Morgan: дозволене читання і дозволений triage
+###############################################################################
+
+### F1. Morgan login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "userName": "morgan", "password": "{{$processEnv SeedUsers__Password}}" }
+
+### F2. Permitted Analyst read (A-03R: 200; після fix — з internal comment)
+GET {{host}}/api/incidents/{{aliceId}}
+Accept: application/json
+
+### F3. Analyst triage інциденту 5 у статусі New (A-07: 200, Triaged)
+POST {{host}}/api/incidents/{{aliceSecondNewId}}/triage
+
+### F4. Analyst не може редагувати (матриця: 403; вразливий стан: 200)
+PUT {{host}}/api/incidents/{{aliceId}}
+Content-Type: application/json
+
+{ "title": "Changed by Morgan", "description": "Analyst не має права редагувати." }
+
+###############################################################################
+# G. Анонім (крок 4.5)
+###############################################################################
+
+### G1. Logout
+POST {{host}}/api/auth/logout
+
+### G2. Details без login (матриця: 401; стан після ЛР 3: 200)
+GET {{host}}/api/incidents/{{bobId}}
+Accept: application/json
