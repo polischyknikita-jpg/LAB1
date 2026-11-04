@@ -1,4 +1,5 @@
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authorization;
 using SecureLab.Api.Scaffolding;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -23,6 +24,8 @@ builder.Services.AddDbContext<SecureLabDbContext>(options =>
 builder.Services.AddScoped<IncidentQueries>();
 
 builder.AddLab03Identity();
+// ЛР 04: реєстрація централізованого рішення для інцидентів.
+builder.Services.AddSingleton<IAuthorizationHandler, IncidentAuthorizationHandler>();
 
 // ЛР 03 (добрий рівень): обмеження частоти спроб входу.
 // Ключ — IP-адреса клієнта; ліміт і вікно читаються з конфігурації під час запиту

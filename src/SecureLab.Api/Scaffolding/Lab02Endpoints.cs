@@ -146,7 +146,7 @@ public static class Lab02Endpoints
                 incident.Severity.ToString(), incident.Status.ToString(),
                 incident.OccurredAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc);
             return Results.Created($"/api/incidents/{incident.Id}", response);
-        }).RequireAuthorization();
+        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole));
     }
 
     // Спершу екрануємо саму \, потім % і _ — так їх ILIKE сприймає буквально.
