@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Antiforgery;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using SecureLab.Api.Scaffolding;
@@ -6,6 +7,7 @@ using Scalar.AspNetCore;
 using SecureLab.Api.Application.Incidents;
 using SecureLab.Api.Data;
 using SecureLab.Api.Presentation.Endpoints;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -24,7 +26,17 @@ builder.Services.AddDbContext<SecureLabDbContext>(options =>
 builder.Services.AddScoped<IncidentQueries>();
 
 builder.AddLab03Identity();
-// ЛР 04: реєстрація централізованого рішення для інцидентів.
+// ЛР 06: стандартний antiforgery ASP.NET Core; request token клієнт повертає в header X-CSRF-TOKEN.
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-CSRF-TOKEN";
+    options.Cookie.Name = "securelab-af";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+});
+
 builder.Services.AddSingleton<IAuthorizationHandler, IncidentAuthorizationHandler>();
 
 // ЛР 03 (добрий рівень): обмеження частоти спроб входу.
@@ -35,13 +47,22 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = (context, _) =>
     {
-        // Подія без credentials: лише тип, результат і trace id.
-        var events = context.HttpContext.RequestServices
-            .GetRequiredService<ILoggerFactory>()
-            .CreateLogger("SecureLab.AuthEvents");
-        events.LogWarning(
-            "Auth event {EventType}: result {Result}, user {UserId}, trace {TraceId}",
-            "login", "rate_limited", "-", context.HttpContext.TraceIdentifier);
+        var loggers = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>();
+        var path = context.HttpContext.Request.Path;
+        if (path.StartsWithSegments("/api/auth/login"))
+        {
+            // Подія без credentials: лише тип, результат і trace id.
+            loggers.CreateLogger("SecureLab.AuthEvents").LogWarning(
+                "Auth event {EventType}: result {Result}, user {UserId}, trace {TraceId}",
+                "login", "rate_limited", "-", context.HttpContext.TraceIdentifier);
+        }
+        else
+        {
+            // ЛР 06: інші обмежені маршрути; query string (q) не логуємо.
+            loggers.CreateLogger("SecureLab.RateLimit").LogWarning(
+                "Rate limit rejected: path {Path}, trace {TraceId}",
+                path.Value, context.HttpContext.TraceIdentifier);
+        }
         return ValueTask.CompletedTask;
     };
     options.AddPolicy("login", httpContext =>
@@ -51,6 +72,27 @@ builder.Services.AddRateLimiter(options =>
         var windowSeconds = configuration.GetValue("LoginRateLimit:WindowSeconds", 60);
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = permitLimit,
+                Window = TimeSpan.FromSeconds(windowSeconds),
+                QueueLimit = 0
+            });
+    });
+    // ЛР 06 (добрий рівень): обмеження пошуку. Ключ — id перевіреного користувача
+    // з cookie-сеансу (UseRateLimiter стоїть після UseAuthentication); для анонімного запиту — IP.
+    // Довільний header клієнта ключем не є. За замовчуванням 5 запитів за 30 секунд.
+    options.AddPolicy("search", httpContext =>
+    {
+        var configuration = httpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var permitLimit = configuration.GetValue("SearchRateLimit:PermitLimit", 5);
+        var windowSeconds = configuration.GetValue("SearchRateLimit:WindowSeconds", 30);
+        var userId = httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var partitionKey = userId is not null
+            ? $"user:{userId}"
+            : $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: partitionKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = permitLimit,
@@ -83,28 +125,38 @@ if (resetRequested)
     return;
 }
 
-app.UseExceptionHandler();
-app.UseStatusCodePages();
 
 // LR 05: CSP from the actual client resources; Scalar UI (Development only) is excluded.
 var csp = "default-src 'self'; frame-ancestors 'none'";
 
+// ЛР 06 (F-01): заголовки безпеки ставимо через OnStarting і ДО UseExceptionHandler.
+// Exception handler очищує response перед 500, але колбек OnStarting спрацьовує
+// для будь-якої відповіді, тож заголовки є і на 200/4xx, і на 500.
 app.Use(async (context, next) =>
 {
-    context.Response.Headers.XContentTypeOptions = "nosniff";
-    context.Response.Headers.Append("Referrer-Policy", "no-referrer");
-
-    var isDevelopmentApiReference =
-        app.Environment.IsDevelopment()
-        && context.Request.Path.StartsWithSegments("/scalar");
-
-    if (!isDevelopmentApiReference)
+    context.Response.OnStarting(() =>
     {
-        context.Response.Headers["Content-Security-Policy"] = csp;
-    }
+        var headers = context.Response.Headers;
+        headers.XContentTypeOptions = "nosniff";
+        headers["Referrer-Policy"] = "no-referrer";
+
+        var isDevelopmentApiReference =
+            app.Environment.IsDevelopment()
+            && context.Request.Path.StartsWithSegments("/scalar");
+
+        if (!isDevelopmentApiReference)
+        {
+            headers["Content-Security-Policy"] = csp;
+        }
+
+        return Task.CompletedTask;
+    });
 
     await next(context);
 });
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
@@ -135,6 +187,12 @@ app.MapGet("/health", async (SecureLabDbContext dbContext, CancellationToken can
     .Produces(StatusCodes.Status200OK)
     .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+// ЛР 06: same-origin видача request token для поточного principal; cookie-частину ставить framework.
+app.MapGet("/api/antiforgery/token", (IAntiforgery antiforgery, HttpContext httpContext) =>
+{
+    var tokens = antiforgery.GetAndStoreTokens(httpContext);
+    return Results.Ok(new { token = tokens.RequestToken });
+}).RequireAuthorization();
 app.MapIncidentEndpoints();
 app.MapLab03Identity();
 app.MapLab02Endpoints();

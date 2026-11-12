@@ -1,3 +1,4 @@
+using SecureLab.Api.Security;
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
@@ -34,13 +35,16 @@ public static class IncidentEndpoints
             .ProducesValidationProblem();
 
         group.MapPut("/{id:guid}", UpdateAsync)
-            .WithName("UpdateIncident");
+    .WithName("UpdateIncident")
+    .AddEndpointFilter<AntiforgeryFilter>();
 
         group.MapDelete("/{id:guid}", DeleteAsync)
-            .WithName("DeleteIncident");
+    .WithName("DeleteIncident")
+    .AddEndpointFilter<AntiforgeryFilter>();
 
         group.MapPost("/{id:guid}/triage", TriageAsync)
-            .WithName("TriageIncident");
+            .WithName("TriageIncident")
+            .AddEndpointFilter<AntiforgeryFilter>();
 
         endpoints.MapGet("/api/incident-comments/{id:guid}", GetCommentAsync)
             .WithName("GetIncidentComment")
@@ -183,7 +187,6 @@ public static class IncidentEndpoints
             incident.Status.ToString(),
             incident.UpdatedAtUtc));
     }
-
     private static async Task<IResult> DeleteAsync(
         Guid id,
         HttpContext httpContext,
@@ -282,6 +285,7 @@ public static class IncidentEndpoints
             CreatedAtUtc = now
         });
         await db.SaveChangesAsync(cancellationToken);
+        LogAllowed(audit, httpContext, userId, incident.Id); // ЛР 06: audit дозволеного переходу
 
         return Results.Ok(new IncidentTriageResponse(incident.Id, incident.Status.ToString()));
     }
@@ -351,6 +355,21 @@ public static class IncidentEndpoints
             "incident.triage",
             incidentId,
             "denied",
+            DateTimeOffset.UtcNow,
+            Activity.Current?.Id ?? httpContext.TraceIdentifier);
+    }
+
+    // ЛР 06: подія аудиту дозволеного привілейованого переходу статусу.
+    // Ті самі поля, що й у відмові: subject, action, resource, result, time, trace.
+    private static void LogAllowed(ILogger audit, HttpContext httpContext, Guid userId, Guid incidentId)
+    {
+        audit.LogInformation(
+            "authorization.allowed subject={SubjectId} action={Action} resource={ResourceId} "
+            + "result={Result} occurredAtUtc={OccurredAtUtc:O} traceId={TraceId}",
+            userId,
+            "incident.triage",
+            incidentId,
+            "allowed",
             DateTimeOffset.UtcNow,
             Activity.Current?.Id ?? httpContext.TraceIdentifier);
     }

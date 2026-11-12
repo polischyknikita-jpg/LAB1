@@ -1,3 +1,4 @@
+using SecureLab.Api.Security;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using SecureLab.Api.Data;
@@ -10,7 +11,7 @@ public static class Lab02Endpoints
 {
     public static void MapLab02Endpoints(this WebApplication app)
     {
-        app.MapGet("/api/incidents/search", async (string? q, string? sortBy, SecureLabDbContext db, CancellationToken ct) =>
+        app.MapGet("/api/incidents/search", async (string? q, string? sortBy, HttpContext httpContext, SecureLabDbContext db, CancellationToken ct) =>
         {
             // Значення q стає параметром; % і _ усередині q шукаються буквально.
             var pattern = "%" + EscapeLike(q ?? "") + "%";
@@ -19,6 +20,17 @@ public static class Lab02Endpoints
             var found = db.Incidents.AsNoTracking()
                 .Where(item => EF.Functions.ILike(item.Title, pattern, "\\")
                             || EF.Functions.ILike(item.Description, pattern, "\\"));
+
+            // ЛР 06 (F-02): та сама матриця, що й для списку ЛР 4 —
+            // Reporter бачить лише власні інциденти, Analyst — усі. Id лише з verified principal.
+            if (!httpContext.User.IsInRole(DbSeeder.AnalystRole))
+            {
+                if (!Guid.TryParse(httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+                {
+                    return Results.Problem(statusCode: StatusCodes.Status500InternalServerError);
+                }
+                found = found.Where(item => item.OwnerUserId == userId);
+            }
 
             // Allowlist: клієнт лише обирає одну з написаних сервером гілок.
             IQueryable<Incident>? ordered = sortBy switch
@@ -54,7 +66,8 @@ public static class Lab02Endpoints
                     item.Severity.ToString(), item.Status.ToString(), item.CreatedAtUtc))
                 .ToListAsync(ct);
             return Results.Ok(items);
-        });
+        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole))
+          .RequireRateLimiting("search");
 
         // ЛР 03: створення доступне лише автентифікованому користувачу;
         // власник береться з verified principal, а не з JSON чи заголовка.
@@ -146,7 +159,8 @@ public static class Lab02Endpoints
                 incident.Severity.ToString(), incident.Status.ToString(),
                 incident.OccurredAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc);
             return Results.Created($"/api/incidents/{incident.Id}", response);
-        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole));
+        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole))
+          .AddEndpointFilter<AntiforgeryFilter>();
     }
 
     // Спершу екрануємо саму \, потім % і _ — так їх ILIKE сприймає буквально.

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
 using SecureLab.Api.Data;
 using SecureLab.Api.Data.Entities;
+using SecureLab.Api.Security;
 
 namespace SecureLab.Api.Scaffolding;
 
@@ -76,14 +77,14 @@ public static class Lab03Identity
         }).RequireRateLimiting("login");
         // ЛР 03 (добрий рівень): стандартний sign-out Identity; Set-Cookie наказує браузеру видалити cookie.
         app.MapPost("/api/auth/logout", async (
-            SignInManager<ApplicationUser> signIn, ILoggerFactory loggers, HttpContext httpContext) =>
+    SignInManager<ApplicationUser> signIn, ILoggerFactory loggers, HttpContext httpContext) =>
         {
             Guid? userId = Guid.TryParse(
                 httpContext.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
             await signIn.SignOutAsync();
             LogAuthEvent(loggers.CreateLogger(AuthEventsCategory), "logout", "success", userId, httpContext);
             return Results.NoContent();
-        });
+        }).AddEndpointFilter<AntiforgeryFilter>();
         // ЛР 03: поточний користувач лише з verified principal; X-Demo-UserId не використовується.
         app.MapGet("/api/me", GetCurrentUser).RequireAuthorization();
         // Приклад лише mechanics: не повертає identity і не реалізує оцінювану operation.
