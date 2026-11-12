@@ -55,7 +55,7 @@ public static class Lab02Endpoints
                     item.Severity.ToString(), item.Status.ToString(), item.CreatedAtUtc))
                 .ToListAsync(ct);
             return Results.Ok(items);
-        });
+        }).RequireRateLimiting("search");
 
         // ЛР 03: створення доступне лише автентифікованому користувачу;
         // власник береться з verified principal, а не з JSON чи заголовка.
