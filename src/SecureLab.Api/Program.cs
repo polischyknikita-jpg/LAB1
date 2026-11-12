@@ -125,28 +125,38 @@ if (resetRequested)
     return;
 }
 
-app.UseExceptionHandler();
-app.UseStatusCodePages();
 
 // LR 05: CSP from the actual client resources; Scalar UI (Development only) is excluded.
 var csp = "default-src 'self'; frame-ancestors 'none'";
 
+// ЛР 06 (F-01): заголовки безпеки ставимо через OnStarting і ДО UseExceptionHandler.
+// Exception handler очищує response перед 500, але колбек OnStarting спрацьовує
+// для будь-якої відповіді, тож заголовки є і на 200/4xx, і на 500.
 app.Use(async (context, next) =>
 {
-    context.Response.Headers.XContentTypeOptions = "nosniff";
-    context.Response.Headers.Append("Referrer-Policy", "no-referrer");
-
-    var isDevelopmentApiReference =
-        app.Environment.IsDevelopment()
-        && context.Request.Path.StartsWithSegments("/scalar");
-
-    if (!isDevelopmentApiReference)
+    context.Response.OnStarting(() =>
     {
-        context.Response.Headers["Content-Security-Policy"] = csp;
-    }
+        var headers = context.Response.Headers;
+        headers.XContentTypeOptions = "nosniff";
+        headers["Referrer-Policy"] = "no-referrer";
+
+        var isDevelopmentApiReference =
+            app.Environment.IsDevelopment()
+            && context.Request.Path.StartsWithSegments("/scalar");
+
+        if (!isDevelopmentApiReference)
+        {
+            headers["Content-Security-Policy"] = csp;
+        }
+
+        return Task.CompletedTask;
+    });
 
     await next(context);
 });
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
