@@ -123,7 +123,8 @@ document.querySelector("#login").addEventListener("submit", async event => {
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form));
   form.elements.password.value = "";
-  const response = await postJson("/api/auth/login", { userName: data.userName, password: data.password });
+    const response = await postJson("/api/auth/login", { userName: data.userName, password: data.password });
+    resetCsrfToken(); // ЛР 06: новий principal — новий request token
   result.textContent = `Login: ${response.status}`;
   await refreshSessionState();
   if (response.status === 204) {
@@ -146,7 +147,7 @@ document.querySelector("#create").addEventListener("submit", async event => {
     createResult.textContent = "Вкажіть час інциденту.";
     return;
   }
-  const response = await postJson("/api/incidents", {
+    const response = await sendJsonMutation("/api/incidents", {
     title: data.title,
     description: data.description,
     severity: data.severity,
@@ -166,7 +167,8 @@ document.querySelector("#create").addEventListener("submit", async event => {
 
 // 4. Вихід: серверний sign-out, очищення UI і повторна перевірка /api/me.
 document.querySelector("#logout").addEventListener("click", async () => {
-  const response = await apiFetch("/api/auth/logout", { method: "POST" });
+    const response = await sendMutation("/api/auth/logout", { method: "POST" });
+    resetCsrfToken();
   result.textContent = `Logout: ${response.status}`;
   clearProfile();
   createResult.textContent = "";

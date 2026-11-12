@@ -1,3 +1,4 @@
+using SecureLab.Api.Security;
 using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
@@ -34,13 +35,16 @@ public static class IncidentEndpoints
             .ProducesValidationProblem();
 
         group.MapPut("/{id:guid}", UpdateAsync)
-            .WithName("UpdateIncident");
+    .WithName("UpdateIncident")
+    .AddEndpointFilter<AntiforgeryFilter>();
 
         group.MapDelete("/{id:guid}", DeleteAsync)
-            .WithName("DeleteIncident");
+    .WithName("DeleteIncident")
+    .AddEndpointFilter<AntiforgeryFilter>();
 
         group.MapPost("/{id:guid}/triage", TriageAsync)
-            .WithName("TriageIncident");
+            .WithName("TriageIncident")
+            .AddEndpointFilter<AntiforgeryFilter>();
 
         endpoints.MapGet("/api/incident-comments/{id:guid}", GetCommentAsync)
             .WithName("GetIncidentComment")

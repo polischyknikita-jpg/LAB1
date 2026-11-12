@@ -1,3 +1,4 @@
+using SecureLab.Api.Security;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using SecureLab.Api.Data;
@@ -146,7 +147,8 @@ public static class Lab02Endpoints
                 incident.Severity.ToString(), incident.Status.ToString(),
                 incident.OccurredAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc);
             return Results.Created($"/api/incidents/{incident.Id}", response);
-        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole));
+        }).RequireAuthorization(policy => policy.RequireRole(DbSeeder.ReporterRole, DbSeeder.AnalystRole))
+          .AddEndpointFilter<AntiforgeryFilter>();
     }
 
     // Спершу екрануємо саму \, потім % і _ — так їх ILIKE сприймає буквально.

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Antiforgery;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using SecureLab.Api.Scaffolding;
@@ -24,7 +25,17 @@ builder.Services.AddDbContext<SecureLabDbContext>(options =>
 builder.Services.AddScoped<IncidentQueries>();
 
 builder.AddLab03Identity();
-// ЛР 04: реєстрація централізованого рішення для інцидентів.
+// ЛР 06: стандартний antiforgery ASP.NET Core; request token клієнт повертає в header X-CSRF-TOKEN.
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-CSRF-TOKEN";
+    options.Cookie.Name = "securelab-af";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+        ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+});
+
 builder.Services.AddSingleton<IAuthorizationHandler, IncidentAuthorizationHandler>();
 
 // ЛР 03 (добрий рівень): обмеження частоти спроб входу.
@@ -135,6 +146,12 @@ app.MapGet("/health", async (SecureLabDbContext dbContext, CancellationToken can
     .Produces(StatusCodes.Status200OK)
     .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
+// ЛР 06: same-origin видача request token для поточного principal; cookie-частину ставить framework.
+app.MapGet("/api/antiforgery/token", (IAntiforgery antiforgery, HttpContext httpContext) =>
+{
+    var tokens = antiforgery.GetAndStoreTokens(httpContext);
+    return Results.Ok(new { token = tokens.RequestToken });
+}).RequireAuthorization();
 app.MapIncidentEndpoints();
 app.MapLab03Identity();
 app.MapLab02Endpoints();

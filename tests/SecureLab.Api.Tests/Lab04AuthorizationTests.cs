@@ -41,7 +41,9 @@ public sealed class Lab04AuthorizationTests(Lab04ApiFactory factory)
     {
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = true
+            BaseAddress = new Uri("https://localhost"),
+            AllowAutoRedirect = false,
+            HandleCookies = true
         });
         using var response = await client.PostAsJsonAsync("/api/auth/login", new { userName, password = StudyPassword });
         if (!response.IsSuccessStatusCode)
@@ -49,6 +51,7 @@ public sealed class Lab04AuthorizationTests(Lab04ApiFactory factory)
             client.Dispose();
             throw new InvalidOperationException($"Study login failed: {(int)response.StatusCode} (credentials omitted).");
         }
+        await client.AttachAntiforgeryTokenAsync(); // ЛР 06: request token для mutation-тестів
         return client;
     }
 
